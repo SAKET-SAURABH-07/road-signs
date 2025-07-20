@@ -1,115 +1,113 @@
 import tkinter as tk
 from tkinter import filedialog
-from PIL import Image, ImageTk
 import cv2
 from ultralytics import YOLO
-import threading
 
 # Load YOLOv8 model
 model = YOLO("trainedmodel.pt")
 
-# Global state
-cap = None
-running = False
-thread = None
 
-# Initialize window
-root = tk.Tk()
-root.title("YOLOv8 Real-Time Detection")
-root.geometry("1000x700")
+# ---------------------- Detection Functions ---------------------- #
+def run_detection_on_video(path):
+    cap = cv2.VideoCapture(path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    delay = int(1000 / fps) if fps > 0 else 33
 
-# Display label for image/video
-display_label = tk.Label(root)
-display_label.pack()
+    frame_count = 0
+    skip_every = 10 # Detect every Nth frame
+    last_annotated = None
 
-# ---------------------- Functions ---------------------- #
-def stop_video():
-    global running, cap
-    running = False
-    if cap:
-        cap.release()
-        cap = None
-        display_label.config(image='')
-
-def show_frame():
-    global cap, running
-    
-    while running and cap:
+    while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Resize for performance
         frame = cv2.resize(frame, (640, 360))
+        frame_count += 1
 
-        # Run detection
+        # Only run detection every N frames
+        if frame_count % skip_every == 0:
+            results = model(frame, verbose=False)
+            last_annotated = results[0].plot()
+        else:
+            # Reuse last detection result if available
+            last_annotated = last_annotated if last_annotated is not None else frame
+
+        cv2.imshow("YOLOv8 - Video Detection (Frame Skipping)", last_annotated)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+def run_detection_on_webcam():
+    cap = cv2.VideoCapture(0)
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        frame = cv2.resize(frame, (640, 360))
         results = model(frame, verbose=False)
         annotated = results[0].plot()
 
-        # Convert to Tkinter format
-        annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(annotated_rgb)
-        imgtk = ImageTk.PhotoImage(image=img)
+        cv2.imshow("YOLOv8 - Webcam Detection", annotated)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-        # Display in label
-        display_label.imgtk = imgtk
-        display_label.configure(image=imgtk)
+    cap.release()
+    cv2.destroyAllWindows()
 
-        # Force small delay for GUI update
-        display_label.update_idletasks()
 
-    stop_video()
-
-def start_thread():
-    global thread
-    thread = threading.Thread(target=show_frame)
-    thread.start()
-
-def browse_video():
-    global cap, running
-    stop_video()
-    path = filedialog.askopenfilename(filetypes=[("Video Files", "*.mp4 *.avi *.mov")])
-    if path:
-        cap = cv2.VideoCapture(path)
-        running = True
-        start_thread()
-
-def start_webcam():
-    global cap, running
-    stop_video()
-    cap = cv2.VideoCapture(0)
-    running = True
-    start_thread()
-
-def browse_image():
-    stop_video()
-    path = filedialog.askopenfilename(filetypes=[("Image Files", "*.jpg *.jpeg *.png")])
-    if not path:
-        return
-
+def run_detection_on_image(path):
     frame = cv2.imread(path)
     frame = cv2.resize(frame, (640, 360))
     results = model(frame, verbose=False)
     annotated = results[0].plot()
-    annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-    img = Image.fromarray(annotated_rgb)
-    imgtk = ImageTk.PhotoImage(image=img)
 
-    display_label.imgtk = imgtk
-    display_label.configure(image=imgtk)
+    cv2.imshow("YOLOv8 - Image Detection", annotated)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
-# ---------------------- Buttons ---------------------- #
+
+# ---------------------- Tkinter GUI ---------------------- #
+def browse_video():
+    path = filedialog.askopenfilename(filetypes=[("Video Files", "*.mp4 *.avi *.mov")])
+    if path:
+        root.destroy()
+        run_detection_on_video(path)
+
+
+def browse_image():
+    path = filedialog.askopenfilename(filetypes=[("Image Files", "*.jpg *.jpeg *.png")])
+    if path:
+        root.destroy()
+        run_detection_on_image(path)
+
+
+def start_webcam():
+    root.destroy()
+    run_detection_on_webcam()
+
+
+# ---------------------- Main Window ---------------------- #
+root = tk.Tk()
+root.title("YOLOv8 Detection - Select Source")
+root.geometry("400x200")
+
+tk.Label(root, text="Choose input for YOLOv8 Detection", font=("Arial", 14)).pack(pady=20)
+
 btn_frame = tk.Frame(root)
-btn_frame.pack(pady=10)
+btn_frame.pack()
 
-tk.Button(btn_frame, text="Choose Image", command=browse_image, width=15).grid(row=0, column=0, padx=10)
-tk.Button(btn_frame, text="Choose Video", command=browse_video, width=15).grid(row=0, column=1, padx=10)
-tk.Button(btn_frame, text="Start Webcam", command=start_webcam, width=15).grid(row=0, column=2, padx=10)
-tk.Button(btn_frame, text="Stop", command=stop_video, width=15).grid(row=0, column=3, padx=10)
+tk.Button(btn_frame, text="Choose Image", command=browse_image, width=20).grid(row=0, column=0, padx=10, pady=10)
+tk.Button(btn_frame, text="Choose Video", command=browse_video, width=20).grid(row=0, column=1, padx=10, pady=10)
+tk.Button(btn_frame, text="Start Webcam", command=start_webcam, width=20).grid(row=1, column=0, columnspan=2, pady=10)
 
-# ---------------------- Exit Cleanup ---------------------- #
 def on_closing():
-    stop_video()
     root.destroy()
 
 root.protocol("WM_DELETE_WINDOW", on_closing)
